@@ -1,0 +1,22 @@
+[[source]]
+
+url = "https://pypi.python.org/simple"
+verify_ssl = true
+name = "pypi"
+
+
+[packages]
+
+aws-lambda-powertools  = "*"
+Faker = "*"
+awswrangler  = "*"
+dynamodb-json  = "*"
+
+[dev-packages]
+
+boto3 = "*"
+pytest = "*"
+pytest-cov = "*"
+
+[requires]
+python_version = "3.8"

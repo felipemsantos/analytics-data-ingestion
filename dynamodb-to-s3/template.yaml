@@ -1,0 +1,173 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  analytics-data-ingestion
+
+Parameters:
+  pDynamoDBTableName:
+    Type: String
+    Default: ddb2s3
+
+  pS3Bucket:
+    Type: String
+    Default: ddb2s3-datalake
+
+  pOLTPDatasource:
+    Type: String
+    Default: my_oltp_system
+
+  pOLTPTableName:
+    Type: String
+    Default: transctions_table
+
+  pPartitionCols:
+    Type: String
+    Default: state,city
+
+
+# More info about Globals options: https://github.com/awslabs/serverless-application-model/blob/master/docs/globals.rst
+Globals:
+  Function:
+    Timeout: 30
+    MemorySize: 512
+    Runtime: python3.8
+    Tracing: Active
+    Handler: app.lambda_handler
+    Environment:
+      Variables:
+        POWERTOOLS_LOGGER_SAMPLE_RATE: 1
+        POWERTOOLS_LOGGER_LOG_EVENT: true
+        POWERTOOLS_METRICS_NAMESPACE: data-ingestion
+        LOG_LEVEL: INFO
+
+# Mor info about supported Resource Types: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#resource-types
+Resources:
+  DataLakeS3Bucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Ref pS3Bucket
+      Tags:
+        - Key: SOLUTION
+          Value: ANALYTICS_DATA_INGESTION
+        - Key: SOLUTION_MODULE
+          Value: DYNAMODB_TO_S3
+
+  DynamoDBTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Ref pDynamoDBTableName
+      AttributeDefinitions:
+        - AttributeName: document
+          AttributeType: S
+      KeySchema:
+        - AttributeName: document
+          KeyType: HASH
+      BillingMode: PAY_PER_REQUEST
+      SSESpecification:
+        SSEEnabled: true
+      StreamSpecification:
+        StreamViewType: NEW_AND_OLD_IMAGES
+      Tags:
+        - Key: SOLUTION
+          Value: ANALYTICS_DATA_INGESTION
+        - Key: SOLUTION_MODULE
+          Value: DYNAMODB_TO_S3
+
+  # More info about Function Resource: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#awsserverlessfunction
+  DataGeneratorFunction:
+    DependsOn: DynamoDBTable
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: data-ingestion-dynamodb-data-generator
+      Description: Generates random data to DynamoDB Table
+      CodeUri: data_generator/build/
+      Environment:
+        Variables:
+          POWERTOOLS_SERVICE_NAME: data-ingestion-dynamodb-data-generator
+          DDB_TABLE: !Ref pDynamoDBTableName
+      Events:
+        Scheduler:
+          Type: Schedule
+          Properties:
+            Schedule: rate(5 minutes)
+            Name: DataGeneratorScheduler
+            Enabled: True
+      Tags:
+        - Key: SOLUTION
+          Value: ANALYTICS_DATA_INGESTION
+        - Key: SOLUTION_MODULE
+          Value: DYNAMODB_TO_S3
+
+  DataGeneratorFunctionAdditionalPermission:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: root
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Action: dynamodb:PutItem
+            Resource: !GetAtt DynamoDBTable.Arn
+      Roles:
+        - !Ref DataGeneratorFunctionRole
+
+  DynamoDBTableStreamProcessorFunction:
+    DependsOn:
+      - DynamoDBTable
+      - DataLakeS3Bucket
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: data-ingestion-dynamodb-stream-processor
+      Description: Ingest data from DynamoDB Table to S3 Raw Data Bucket
+      CodeUri: stream_processor/build/
+      Timeout: 60
+      Environment:
+        Variables:
+          POWERTOOLS_SERVICE_NAME: data-ingestion-dynamodb-stream-processor
+          BUCKET: !Ref pS3Bucket
+          DATA_SOURCE: !Ref pOLTPDatasource
+          TABLE_NAME: !Ref pOLTPTableName
+          PARTITION_COLS: !Ref pPartitionCols
+          CATALOG_DATABASE: !Sub "raw_${pOLTPDatasource}"
+          CATALOG_TABLE_NAME: !Sub "${pOLTPTableName}_parquet"
+      Events:
+        DynamoDBTableStream:
+          Type: DynamoDB
+          Properties:
+            Stream: !GetAtt DynamoDBTable.StreamArn
+            StartingPosition: TRIM_HORIZON
+            BatchSize: 100
+            Enabled: true
+            MaximumRetryAttempts: 1
+      Tags:
+        - Key: SOLUTION
+          Value: ANALYTICS_DATA_INGESTION
+        - Key: SOLUTION_MODULE
+          Value: DYNAMODB_TO_S3
+
+  DynamoDBTableStreamProcessorFunctionAdditionalPermission:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: root
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Action: s3:PutObject
+            Resource: !Sub "arn:aws:s3:::${pS3Bucket}/*"
+      Roles:
+        - !Ref DynamoDBTableStreamProcessorFunctionRole
+
+Outputs:
+
+  DataGeneratorFunction:
+    Value: !GetAtt DataGeneratorFunction.Arn
+
+  DynamoDBTableStreamProcessorFunction:
+    Value: !GetAtt DynamoDBTableStreamProcessorFunction.Arn
+
+  DataLakeS3Bucket:
+    Value: !GetAtt DataLakeS3Bucket.Arn
+
+  DynamoDBTable:
+    Value: !GetAtt DynamoDBTable.Arn
