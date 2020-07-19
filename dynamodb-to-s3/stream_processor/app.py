@@ -1,4 +1,3 @@
-import json
 import os
 
 import awswrangler as wr
@@ -24,6 +23,7 @@ PARTITION_COLS = os.getenv("PARTITION_COLS", None)
 CATALOG_DATABASE = os.getenv("CATALOG_DATABASE", None)
 CATALOG_TABLE_NAME = os.getenv("CATALOG_TABLE_NAME", None)
 
+
 @metrics.log_metrics
 @logger.inject_lambda_context
 @tracer.capture_lambda_handler
@@ -33,7 +33,8 @@ def lambda_handler(event, context):
         result = {}
         logger.info(f"Processing {len(event['Records'])} record(s)")
         for event_record in event["Records"]:
-            raw = event_record["dynamodb"]["OldImage"] if event_record["eventName"] == "REMOVE" else event_record["dynamodb"]["NewImage"]
+            raw = event_record["dynamodb"]["OldImage"] if event_record["eventName"] == "REMOVE" else \
+            event_record["dynamodb"]["NewImage"]
             record = ddb_json.loads(raw)
             record["op"] = event_record["eventName"][:1]
             records.append(record)
@@ -41,6 +42,11 @@ def lambda_handler(event, context):
         df = pd.DataFrame.from_dict(records)
         result["record_count"], _ = df.shape
         metrics.add_metric(name="record_count", unit=MetricUnit.Count, value=result["record_count"])
+
+        try:
+            wr.catalog.create_database(CATALOG_DATABASE)
+        except Exception as e:
+            logger.warning(e)
 
         table_name = wr.catalog.sanitize_table_name(CATALOG_TABLE_NAME)
         logger.info(f"Storing dataframe at table {CATALOG_DATABASE}.{table_name}")

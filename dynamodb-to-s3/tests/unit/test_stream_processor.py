@@ -1,13 +1,15 @@
 import json
+
 import pytest
-from .mock import MockContext
+
 from stream_processor import app
+from .mock import MockContext
 
 
 @pytest.fixture()
 def ddb_table_stream_event():
     """ Generates DynamoDB TableStrem Event"""
-    with open("./events/stream_processor_event.json", "r") as fp:
+    with open("../../events/stream_processor_event.json", "r") as fp:
         return json.load(fp)
 
 
