@@ -7,14 +7,14 @@ name = "pypi"
 
 [packages]
 
+[dev-packages]
+
+boto3 = "*"
 aws-lambda-powertools  = "*"
 Faker = "*"
 awswrangler  = "*"
 dynamodb-json  = "*"
 
-[dev-packages]
-
-boto3 = "*"
 pytest = "*"
 pytest-cov = "*"
 
