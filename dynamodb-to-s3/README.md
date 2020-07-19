@@ -36,7 +36,15 @@ As you've chosen the experimental Makefile we can use Make to automate Packaging
         make invoke SERVICE="FirstFunction" EVENT="events/<FUNCION_NAME>_event.json"
 ```
 
+And for all layers do:
 
+````bash
+    cd layers
+
+    ...::: This will build all layers
+    ./build.sh
+
+````
 ## Testing
 
 `Pytest` is used to discover tests created under `tests` folder - Here's how you can run tests our initial unit tests:

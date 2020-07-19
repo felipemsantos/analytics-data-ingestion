@@ -4,9 +4,6 @@ Description: >
   analytics-data-ingestion
 
 Parameters:
-  pDynamoDBTableName:
-    Type: String
-    Default: ddb2s3
 
   pS3Bucket:
     Type: String
@@ -14,11 +11,11 @@ Parameters:
 
   pOLTPDatasource:
     Type: String
-    Default: my_oltp_system
+    Default: backoffice
 
   pOLTPTableName:
     Type: String
-    Default: transctions_table
+    Default: customers_subscriptions
 
   pPartitionCols:
     Type: String
@@ -46,16 +43,11 @@ Resources:
     Type: AWS::S3::Bucket
     Properties:
       BucketName: !Ref pS3Bucket
-      Tags:
-        - Key: SOLUTION
-          Value: ANALYTICS_DATA_INGESTION
-        - Key: SOLUTION_MODULE
-          Value: DYNAMODB_TO_S3
 
   DynamoDBTable:
     Type: AWS::DynamoDB::Table
     Properties:
-      TableName: !Ref pDynamoDBTableName
+      TableName: !Ref pOLTPTableName
       AttributeDefinitions:
         - AttributeName: document
           AttributeType: S
@@ -67,11 +59,6 @@ Resources:
         SSEEnabled: true
       StreamSpecification:
         StreamViewType: NEW_AND_OLD_IMAGES
-      Tags:
-        - Key: SOLUTION
-          Value: ANALYTICS_DATA_INGESTION
-        - Key: SOLUTION_MODULE
-          Value: DYNAMODB_TO_S3
 
   # More info about Function Resource: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#awsserverlessfunction
   DataGeneratorFunction:
@@ -81,10 +68,13 @@ Resources:
       FunctionName: data-ingestion-dynamodb-data-generator
       Description: Generates random data to DynamoDB Table
       CodeUri: data_generator/build/
+      Layers:
+        - !Ref PythonFakerLayerVersion
+        - !Ref PythonAWSLambdaPowertoolsLayerVersion
       Environment:
         Variables:
           POWERTOOLS_SERVICE_NAME: data-ingestion-dynamodb-data-generator
-          DDB_TABLE: !Ref pDynamoDBTableName
+          DDB_TABLE: !Ref pOLTPTableName
       Events:
         Scheduler:
           Type: Schedule
@@ -92,11 +82,6 @@ Resources:
             Schedule: rate(5 minutes)
             Name: DataGeneratorScheduler
             Enabled: True
-      Tags:
-        - Key: SOLUTION
-          Value: ANALYTICS_DATA_INGESTION
-        - Key: SOLUTION_MODULE
-          Value: DYNAMODB_TO_S3
 
   DataGeneratorFunctionAdditionalPermission:
     Type: AWS::IAM::Policy
@@ -121,6 +106,10 @@ Resources:
       Description: Ingest data from DynamoDB Table to S3 Raw Data Bucket
       CodeUri: stream_processor/build/
       Timeout: 60
+      Layers:
+        - !Ref PythonAWSLambdaPowertoolsLayerVersion
+        - !Ref PythonAWSWranglerLayerVersion
+        - !Ref PythonDynamoDBJsonLayerVersion
       Environment:
         Variables:
           POWERTOOLS_SERVICE_NAME: data-ingestion-dynamodb-stream-processor
@@ -135,15 +124,10 @@ Resources:
           Type: DynamoDB
           Properties:
             Stream: !GetAtt DynamoDBTable.StreamArn
-            StartingPosition: TRIM_HORIZON
+            StartingPosition: LATEST
             BatchSize: 100
             Enabled: true
             MaximumRetryAttempts: 1
-      Tags:
-        - Key: SOLUTION
-          Value: ANALYTICS_DATA_INGESTION
-        - Key: SOLUTION_MODULE
-          Value: DYNAMODB_TO_S3
 
   DynamoDBTableStreamProcessorFunctionAdditionalPermission:
     Type: AWS::IAM::Policy
@@ -153,10 +137,70 @@ Resources:
         Version: 2012-10-17
         Statement:
           - Effect: Allow
+            Action:
+              - athena:StartQueryExecution
+              - athena:GetQueryExecution
+              - dynamodb:ListStreams
+              - dynamodb:GetShardIterator
+              - dynamodb:DescribeStream
+              - dynamodb:GetRecords
+            Resource: "*"
+          - Effect: Allow
             Action: s3:PutObject
-            Resource: !Sub "arn:aws:s3:::${pS3Bucket}/*"
+            Resource:
+              - !Sub "arn:aws:s3:::${pS3Bucket}/*"
+              - !Sub "arn:aws:s3:::aws-athena-query-results-${AWS::AccountId}-${AWS::Region}/*"
+          - Effect: Allow
+            Action:
+              - glue:GetTable
+              - glue:CreateDatabase
+              - glue:CreateTable
+              - glue:CreatePartition
+              - glue:UpdatePartition
+              - glue:UpdateTable
+            Resource:
+              - !Sub "arn:aws:glue:${AWS::Region}:${AWS::AccountId}:table/*/*"
+              - !Sub "arn:aws:glue:${AWS::Region}:${AWS::AccountId}:database/*"
+              - !Sub "arn:aws:glue:${AWS::Region}:${AWS::AccountId}:catalog"
+
       Roles:
         - !Ref DynamoDBTableStreamProcessorFunctionRole
+
+  PythonAWSWranglerLayerVersion:
+    Type: AWS::Serverless::LayerVersion
+    Properties:
+      LayerName: PythonAWSWrangler
+      ContentUri: layers/awswrangler/awswrangler-layer-1.6.3-py3.8.zip
+      CompatibleRuntimes:
+        - python3.8
+      RetentionPolicy: Delete
+
+  PythonFakerLayerVersion:
+    Type: AWS::Serverless::LayerVersion
+    Properties:
+      LayerName: PythonFaker
+      ContentUri: layers/Faker/build/
+      CompatibleRuntimes:
+        - python3.8
+      RetentionPolicy: Delete
+
+  PythonDynamoDBJsonLayerVersion:
+    Type: AWS::Serverless::LayerVersion
+    Properties:
+      LayerName: PythonDynamoDBJson
+      ContentUri: layers/dynamodb-json/build/
+      CompatibleRuntimes:
+        - python3.8
+      RetentionPolicy: Delete
+
+  PythonAWSLambdaPowertoolsLayerVersion:
+    Type: AWS::Serverless::LayerVersion
+    Properties:
+      LayerName: PythonAWSLambdaPowertools
+      ContentUri: layers/aws-lambda-powertools/build/
+      CompatibleRuntimes:
+        - python3.8
+      RetentionPolicy: Delete
 
 Outputs:
 
