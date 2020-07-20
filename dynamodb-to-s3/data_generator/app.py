@@ -64,7 +64,7 @@ def lambda_handler(event, context):
             ddb_table.put_item(Item=record)
             record_count += 1
         logger.info(f"{record_count} record(s) generated")
-        metrics.add_metric(name="record_count", unit=MetricUnit.Count, value=record_count)
+        metrics.add_metric(name="generated_record_count", unit=MetricUnit.Count, value=record_count)
         return record_count
     except Exception as e:
         logger.error(e)
