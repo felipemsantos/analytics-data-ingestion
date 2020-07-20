@@ -1,4 +1,5 @@
 import os
+from datetime import datetime
 
 import awswrangler as wr
 import boto3
@@ -16,13 +17,9 @@ AWS_PROFILE = os.getenv("AWS_PROFILE", None)
 AWS_REGION = os.getenv("AWS_REGION", None)
 boto3.setup_default_session(profile_name=AWS_PROFILE, region_name=AWS_REGION)
 
-BUCKET = os.getenv("BUCKET", None)
+TARGET_BUCKET = os.getenv("TARGET_BUCKET", None)
 DATA_SOURCE = os.getenv("DATA_SOURCE", None)
 TABLE_NAME = os.getenv("TABLE_NAME", None)
-PARTITION_COLS = os.getenv("PARTITION_COLS", None)
-CATALOG_DATABASE = os.getenv("CATALOG_DATABASE", None)
-CATALOG_TABLE_NAME = os.getenv("CATALOG_TABLE_NAME", None)
-
 
 @metrics.log_metrics
 @logger.inject_lambda_context
@@ -30,40 +27,60 @@ CATALOG_TABLE_NAME = os.getenv("CATALOG_TABLE_NAME", None)
 def lambda_handler(event, context):
     try:
         records = []
+        customers = []
+        subscriptions = []
         result = {}
+
+        current_timestamp = datetime.utcnow()
+        ingestion_date = current_timestamp.strftime("%Y-%m-%d")
+        ingestion_time = current_timestamp.strftime("%H:%M:%S")
+
         logger.info(f"Processing {len(event['Records'])} record(s)")
         for event_record in event["Records"]:
             raw = event_record["dynamodb"]["OldImage"] if event_record["eventName"] == "REMOVE" else \
-            event_record["dynamodb"]["NewImage"]
+                event_record["dynamodb"]["NewImage"]
+            op = event_record["eventName"][:1]
             record = ddb_json.loads(raw)
-            record["op"] = event_record["eventName"][:1]
+            record["op"] = op
+            record["ingestion_date"] = ingestion_date
+            record["ingestion_time"] = ingestion_time
             records.append(record)
 
-        df = pd.DataFrame.from_dict(records)
-        result["record_count"], _ = df.shape
-        metrics.add_metric(name="record_count", unit=MetricUnit.Count, value=result["record_count"])
+        # Transforms the data list to pandas DataFrame
+        records_df = pd.DataFrame.from_dict(records)
 
+        result["records_count"], _ = records_df.shape
+        metrics.add_metric(name="records_count",
+                           unit=MetricUnit.Count,
+                           value=result["records_count"])
+
+        # sanitize names
+        data_source_name = wr.catalog._sanitize_name(DATA_SOURCE)
+        table_name = f"{wr.catalog._sanitize_name(TABLE_NAME)}_parquet"
+        database_name = f"raw_{data_source_name}"
+
+        # Creates catalog database doesn't exist
         try:
-            wr.catalog.create_database(CATALOG_DATABASE)
+            logger.info(f"Creating catalog database {database_name}")
+            wr.catalog.create_database(database_name)
         except Exception as e:
             logger.warning(e)
 
-        table_name = wr.catalog.sanitize_table_name(CATALOG_TABLE_NAME)
-        logger.info(f"Storing dataframe at table {CATALOG_DATABASE}.{table_name}")
-        s3_to_parquet = wr.s3.to_parquet(
-            df=df,
-            path=f"s3://{BUCKET}/raw/{DATA_SOURCE}/{TABLE_NAME}/",
+        table_dataset_path = f"s3://{TARGET_BUCKET}/raw/{data_source_name}/{table_name}/"
+        logger.info(f"Persisting customers DataFrame at table {database_name}.{table_name}")
+        wr.s3.to_parquet(
+            df=records_df,
+            path=table_dataset_path,
             dataset=True,
-            partition_cols=PARTITION_COLS.split(",") if PARTITION_COLS else None,
-            database=CATALOG_DATABASE,
+            mode="append",
+            partition_cols=["ingestion_date", "ingestion_time"],
+            database=database_name,
             table=table_name,
             catalog_versioning=True
         )
-        result["partitions"] = len(s3_to_parquet["partitions_values"])
-        metrics.add_metric(name="partitions", unit=MetricUnit.Count, value=result["partitions"])
+        logger.info(f"Fixing {database_name}.{table_name} partitions")
+        wr.athena.repair_table(table_name, database_name)
 
-        logger.info(f"Fixing table {CATALOG_DATABASE}.{table_name} partition(s) {PARTITION_COLS}")
-        wr.athena.repair_table(table_name, CATALOG_DATABASE)
         return result
     except Exception as e:
         logger.error(e)
