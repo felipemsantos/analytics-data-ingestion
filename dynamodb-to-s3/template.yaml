@@ -17,10 +17,6 @@ Parameters:
     Type: String
     Default: customers_subscriptions
 
-  pPartitionCols:
-    Type: String
-    Default: state,city
-
 
 # More info about Globals options: https://github.com/awslabs/serverless-application-model/blob/master/docs/globals.rst
 Globals:
@@ -43,6 +39,10 @@ Resources:
     Type: AWS::S3::Bucket
     Properties:
       BucketName: !Ref pS3Bucket
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
 
   DynamoDBTable:
     Type: AWS::DynamoDB::Table
@@ -113,12 +113,9 @@ Resources:
       Environment:
         Variables:
           POWERTOOLS_SERVICE_NAME: data-ingestion-dynamodb-stream-processor
-          BUCKET: !Ref pS3Bucket
+          TARGET_BUCKET: !Ref pS3Bucket
           DATA_SOURCE: !Ref pOLTPDatasource
           TABLE_NAME: !Ref pOLTPTableName
-          PARTITION_COLS: !Ref pPartitionCols
-          CATALOG_DATABASE: !Sub "raw_${pOLTPDatasource}"
-          CATALOG_TABLE_NAME: !Sub "${pOLTPTableName}_parquet"
       Events:
         DynamoDBTableStream:
           Type: DynamoDB
@@ -152,7 +149,9 @@ Resources:
               - !Sub "arn:aws:s3:::aws-athena-query-results-${AWS::AccountId}-${AWS::Region}/*"
           - Effect: Allow
             Action:
+              - glue:GetDatabase
               - glue:GetTable
+              - glue:BatchCreatePartition
               - glue:CreateDatabase
               - glue:CreateTable
               - glue:CreatePartition
