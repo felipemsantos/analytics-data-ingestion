@@ -1,4 +1,0 @@
-aws-lambda-powertools
-Faker
-awswrangler
-dynamodb-json

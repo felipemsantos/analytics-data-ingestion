@@ -7,7 +7,7 @@ Parameters:
 
   pS3Bucket:
     Type: String
-    Default: ddb2s3-datalake
+    Default: eleve-santofel-datalake
 
   pOLTPDatasource:
     Type: String
@@ -62,12 +62,15 @@ Resources:
 
   # More info about Function Resource: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#awsserverlessfunction
   DataGeneratorFunction:
-    DependsOn: DynamoDBTable
+    DependsOn:
+      - DynamoDBTable
+      - DataGeneratorFunctionRole
     Type: AWS::Serverless::Function
     Properties:
       FunctionName: data-ingestion-dynamodb-data-generator
       Description: Generates random data to DynamoDB Table
-      CodeUri: data_generator/build/
+      CodeUri: data_generator/
+      Role: !GetAtt DataGeneratorFunctionRole.Arn
       Layers:
         - !Ref PythonFakerLayerVersion
         - !Ref PythonAWSLambdaPowertoolsLayerVersion
@@ -83,29 +86,44 @@ Resources:
             Name: DataGeneratorScheduler
             Enabled: True
 
-  DataGeneratorFunctionAdditionalPermission:
-    Type: AWS::IAM::Policy
+  DataGeneratorFunctionRole:
+    Type: AWS::IAM::Role
     Properties:
-      PolicyName: root
-      PolicyDocument:
+      AssumeRolePolicyDocument:
         Version: 2012-10-17
         Statement:
-          - Effect: Allow
-            Action: dynamodb:PutItem
-            Resource: !GetAtt DynamoDBTable.Arn
-      Roles:
-        - !Ref DataGeneratorFunctionRole
+          - Effect: "Allow"
+            Principal:
+              Service:
+                - "lambda.amazonaws.com"
+            Action:
+              - "sts:AssumeRole"
+      Path: "/eng-roles/"
+#      PermissionsBoundary: !Sub "arn:aws:iam::${AWS::AccountId}:policy/roles-boundary"
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+        - arn:aws:iam::aws:policy/AWSXrayFullAccess
+      Policies:
+        - PolicyName: SsmChangeHistoryS3FromFirehosePolicy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action: dynamodb:PutItem
+                Resource: !GetAtt DynamoDBTable.Arn
 
   DynamoDBTableStreamProcessorFunction:
     DependsOn:
       - DynamoDBTable
       - DataLakeS3Bucket
+      - DynamoDBTableStreamProcessorFunctionRole
     Type: AWS::Serverless::Function
     Properties:
       FunctionName: data-ingestion-dynamodb-stream-processor
       Description: Ingest data from DynamoDB Table to S3 Raw Data Bucket
-      CodeUri: stream_processor/build/
+      CodeUri: stream_processor/
       Timeout: 60
+      Role: !GetAtt DynamoDBTableStreamProcessorFunctionRole.Arn
       Layers:
         - !Ref PythonAWSLambdaPowertoolsLayerVersion
         - !Ref PythonAWSWranglerLayerVersion
@@ -126,44 +144,68 @@ Resources:
             Enabled: true
             MaximumRetryAttempts: 1
 
-  DynamoDBTableStreamProcessorFunctionAdditionalPermission:
-    Type: AWS::IAM::Policy
+  DynamoDBTableStreamProcessorFunctionRole:
+    Type: AWS::IAM::Role
     Properties:
-      PolicyName: root
-      PolicyDocument:
+      AssumeRolePolicyDocument:
         Version: 2012-10-17
         Statement:
-          - Effect: Allow
+          - Effect: "Allow"
+            Principal:
+              Service:
+                - "lambda.amazonaws.com"
             Action:
-              - athena:StartQueryExecution
-              - athena:GetQueryExecution
-              - dynamodb:ListStreams
-              - dynamodb:GetShardIterator
-              - dynamodb:DescribeStream
-              - dynamodb:GetRecords
-            Resource: "*"
-          - Effect: Allow
-            Action: s3:PutObject
-            Resource:
-              - !Sub "arn:aws:s3:::${pS3Bucket}/*"
-              - !Sub "arn:aws:s3:::aws-athena-query-results-${AWS::AccountId}-${AWS::Region}/*"
-          - Effect: Allow
-            Action:
-              - glue:GetDatabase
-              - glue:GetTable
-              - glue:BatchCreatePartition
-              - glue:CreateDatabase
-              - glue:CreateTable
-              - glue:CreatePartition
-              - glue:UpdatePartition
-              - glue:UpdateTable
-            Resource:
-              - !Sub "arn:aws:glue:${AWS::Region}:${AWS::AccountId}:table/*/*"
-              - !Sub "arn:aws:glue:${AWS::Region}:${AWS::AccountId}:database/*"
-              - !Sub "arn:aws:glue:${AWS::Region}:${AWS::AccountId}:catalog"
-
-      Roles:
-        - !Ref DynamoDBTableStreamProcessorFunctionRole
+              - "sts:AssumeRole"
+      Path: "/eng-roles/"
+      #      PermissionsBoundary: !Sub "arn:aws:iam::${AWS::AccountId}:policy/roles-boundary"
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+        - arn:aws:iam::aws:policy/AWSXrayFullAccess
+      Policies:
+        - PolicyName: SsmChangeHistoryS3FromFirehosePolicy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action: dynamodb:PutItem
+                Resource: !GetAtt DynamoDBTable.Arn
+              - Effect: Allow
+                Action:
+                  - athena:StartQueryExecution
+                  - athena:GetQueryExecution
+                  - dynamodb:ListStreams
+                  - dynamodb:GetShardIterator
+                  - dynamodb:DescribeStream
+                  - dynamodb:GetRecords
+                Resource: "*"
+              - Effect: Allow
+                Action:
+                  - s3:PutObject
+                  - s3:GetBucketLocation
+                  - s3:GetObject
+                  - s3:ListBucket
+                  - s3:ListBucketMultipartUploads
+                  - s3:ListMultipartUploadParts
+                  - s3:AbortMultipartUpload
+                  - s3:CreateBucket
+                  - s3:PutObject
+                Resource:
+                  - !Sub "arn:aws:s3:::${pS3Bucket}/*"
+                  - !Sub "arn:aws:s3:::${pS3Bucket}"
+                  - !Sub "arn:aws:s3:::aws-athena-query-results-${AWS::AccountId}-${AWS::Region}/*"
+              - Effect: Allow
+                Action:
+                  - glue:GetTable
+                  - glue:CreateDatabase
+                  - glue:CreateTable
+                  - glue:CreatePartition
+                  - glue:BatchCreatePartition
+                  - glue:UpdatePartition
+                  - glue:UpdateTable
+                Resource:
+                  - !Sub "arn:aws:glue:${AWS::Region}:${AWS::AccountId}:table/*/*"
+                  - !Sub "arn:aws:glue:${AWS::Region}:${AWS::AccountId}:database/*"
+                  - !Sub "arn:aws:glue:${AWS::Region}:${AWS::AccountId}:catalog"
 
   PythonAWSWranglerLayerVersion:
     Type: AWS::Serverless::LayerVersion
