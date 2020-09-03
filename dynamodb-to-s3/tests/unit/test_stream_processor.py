@@ -14,6 +14,7 @@ def ddb_table_stream_event():
 
 
 def test_lambda_handler(ddb_table_stream_event):
-    ret = app.lambda_handler(ddb_table_stream_event, MockContext(__name__))
+    context = MockContext(__name__)
+    ret = app.lambda_handler(ddb_table_stream_event, context)
     assert ret["record_count"] == len(ddb_table_stream_event["Records"])
     assert ret["partitions"] > 0

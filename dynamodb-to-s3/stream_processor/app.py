@@ -55,8 +55,8 @@ def lambda_handler(event, context):
                            value=result["records_count"])
 
         # sanitize names
-        data_source_name = wr.catalog._sanitize_name(DATA_SOURCE)
-        table_name = f"{wr.catalog._sanitize_name(TABLE_NAME)}_parquet"
+        data_source_name = wr.catalog._utils._sanitize_name(DATA_SOURCE)
+        table_name = f"{wr.catalog._utils._sanitize_name(TABLE_NAME)}_parquet"
         database_name = f"raw_{data_source_name}"
 
         # Creates catalog database doesn't exist
